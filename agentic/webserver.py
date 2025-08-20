@@ -38,6 +38,11 @@ INDEX_HTML = """
     .input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--fg)}
     .primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}
     .primary:hover{filter:brightness(1.05)}
+    .danger{background:#ef4444;color:#fff;border:1px solid #ef4444}
+    .danger:hover{filter:brightness(1.05)}
+    .status{display:flex;align-items:center;gap:8px;color:var(--muted);padding:6px 4px}
+    .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -50,20 +55,18 @@ INDEX_HTML = """
         <button class=\"btn\" onclick=\"toggleTheme()\">Theme</button>
       </div>
     </div>
-    <div id=\"log\"></div>
-    <div id=\"tools\" style=\"margin-top:12px\"></div>
-    <div id=\"reasoning\" style=\"margin-top:12px\"></div>
+    <div id="log"></div>
     <div class=\"composer\">
       <input class=\"input\" id=\"input\" placeholder=\"메시지를 입력하고 Enter\" />
-      <button class=\"btn primary\" onclick=\"send()\">Send</button>
+      <button class="btn primary" id="sendBtn" onclick="send()">Send</button>
     </div>
   </div>
   <script>
     const log = document.getElementById('log');
-    const tools = document.getElementById('tools');
-    const reasoningBox = document.getElementById('reasoning');
     const input = document.getElementById('input');
-    input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ send(); }});
+    const sendBtn = document.getElementById('sendBtn');
+    let sending = false;
+    input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ if(!sending) send(); }});
     function append(line, cls){
       const div=document.createElement('div'); div.className='line evt '+(cls||'');
       const lab=document.createElement('span'); lab.className='label';
@@ -72,12 +75,6 @@ INDEX_HTML = """
       if(idx>0){ lab.textContent=line.slice(0, idx+1); cont.textContent=line.slice(idx+2); }
       else { lab.textContent=''; cont.textContent=line; }
       div.appendChild(lab); div.appendChild(cont); log.appendChild(div); log.scrollTop=log.scrollHeight;
-    }
-    function appendTool(line){
-      const div=document.createElement('div'); div.className='line evt tool';
-      const lab=document.createElement('span'); lab.className='label'; lab.textContent='tool>';
-      const cont=document.createElement('span'); cont.className='content'; cont.textContent=line;
-      div.appendChild(lab); div.appendChild(cont); tools.appendChild(div); tools.scrollTop=tools.scrollHeight;
     }
     function appendApproval(ev){
       const card=document.createElement('div'); card.className='approval';
@@ -90,25 +87,47 @@ INDEX_HTML = """
       const meta=document.createElement('div'); meta.style.marginTop='6px'; meta.textContent=`tool=${ev.tool} reason=${ev.reason}`;
       const pre=document.createElement('pre'); pre.textContent=JSON.stringify(ev.args, null, 2);
       card.appendChild(head); card.appendChild(meta); card.appendChild(pre);
-      tools.appendChild(card); tools.scrollTop=tools.scrollHeight;
+      log.appendChild(card); log.scrollTop=log.scrollHeight;
     }
     async function approve(token, ok, holder){
       holder.textContent = holder.textContent + ` => sending decision...`;
+      showBusy(ok ? '검색 중...' : '거부 처리 중...');
       const resp = await fetch('/api/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token, approve: ok})});
       const data = await resp.json();
+      hideBusy();
       renderEvents(data.events||[]);
     }
     function appendDetails(title, obj){
       const d=document.createElement('details');
       const s=document.createElement('summary'); s.textContent=title; d.appendChild(s);
       const pre=document.createElement('pre'); pre.textContent=JSON.stringify(obj, null, 2);
-      d.appendChild(pre); tools.appendChild(d); tools.scrollTop=tools.scrollHeight;
+      d.appendChild(pre); log.appendChild(d); log.scrollTop=log.scrollHeight;
     }
+    function appendReasoningDetails(text){
+      const row=document.createElement('div'); row.className='line evt';
+      const lab=document.createElement('span'); lab.className='label'; lab.textContent='reasoning>';
+      const body=document.createElement('div');
+      const det=document.createElement('details'); det.open=false;
+      const sum=document.createElement('summary'); sum.textContent='reasoning (click to expand)';
+      const pre=document.createElement('pre'); pre.textContent=text||'';
+      det.appendChild(sum); det.appendChild(pre); body.appendChild(det);
+      row.appendChild(lab); row.appendChild(body);
+      log.appendChild(row); log.scrollTop=log.scrollHeight;
+    }
+    let busyEl = null;
+    function showBusy(text){
+      if(busyEl){ hideBusy(); }
+      busyEl = document.createElement('div'); busyEl.className='status';
+      const sp=document.createElement('span'); sp.className='spinner';
+      const tx=document.createElement('span'); tx.textContent=text||'처리 중...';
+      busyEl.appendChild(sp); busyEl.appendChild(tx); log.appendChild(busyEl); log.scrollTop=log.scrollHeight;
+    }
+    function hideBusy(){ if(busyEl && busyEl.parentElement){ busyEl.parentElement.removeChild(busyEl); } busyEl=null; }
     // Streaming session state and helpers
     let sess = null;
-    function beginSession(){ sess = {assistantEl:null, reasoningEl:null, raw:null, reasoningBuf:''}; }
+    function beginSession(){ sess = {assistantEl:null, reasoningEl:null, raw:null, reasoningBuf:'', src:null}; }
     function ensureAssistantEl(){ if(!sess.assistantEl){ const div=document.createElement('div'); div.className='line evt'; const lab=document.createElement('span'); lab.className='label'; lab.textContent='assistant>'; const cont=document.createElement('span'); cont.className='content'; div.appendChild(lab); div.appendChild(cont); log.appendChild(div); sess.assistantEl=cont; } return sess.assistantEl; }
-    function ensureReasoningEl(){ if(!sess.reasoningEl){ const div=document.createElement('div'); div.className='line evt'; const lab=document.createElement('span'); lab.className='label'; lab.textContent='reasoning>'; const cont=document.createElement('span'); cont.className='content'; div.appendChild(lab); div.appendChild(cont); reasoningBox.appendChild(div); sess.reasoningEl=cont; } return sess.reasoningEl; }
+    function ensureReasoningEl(){ if(!sess.reasoningEl){ const div=document.createElement('div'); div.className='line evt'; const lab=document.createElement('span'); lab.className='label'; lab.textContent='reasoning>'; const cont=document.createElement('span'); cont.className='content'; div.appendChild(lab); div.appendChild(cont); log.appendChild(div); sess.reasoningEl=cont; } return sess.reasoningEl; }
     function collapseReasoning(){
       if(!sess || !sess.reasoningEl) return;
       const text = sess.reasoningBuf || (sess.reasoningEl.textContent||'').replace(/^reasoning>\s*/, '');
@@ -121,20 +140,57 @@ INDEX_HTML = """
       if (container && container.parentElement) {
         container.parentElement.replaceChild(row, container);
       } else {
-        reasoningBox.appendChild(row);
+        log.appendChild(row);
       }
       sess.reasoningEl = null;
     }
     function endSession(){ if(sess && sess.raw){ appendDetails('raw payload', sess.raw); } sess=null; }
+    function setSending(on){
+      sending = !!on;
+      if(on){
+        sendBtn.textContent = 'Stop';
+        sendBtn.classList.add('danger');
+        sendBtn.onclick = stop;
+        input.disabled = true;
+      } else {
+        sendBtn.textContent = 'Send';
+        sendBtn.classList.remove('danger');
+        sendBtn.onclick = send;
+        input.disabled = false;
+      }
+    }
+    async function stop(){
+      if(!sending) return;
+      try { await fetch('/api/cancel', {method:'POST'}); } catch(e){}
+      try { if(sess && sess.src){ sess.src.close(); } } catch(e){}
+      setSending(false);
+      collapseReasoning();
+      endSession();
+    }
     function renderEvents(events){
       events.forEach(ev=>{
-        if(ev.type==='assistant_raw') append('assistant(raw)> '+(ev.text||''));
-        if(ev.type==='reasoning') append('reasoning> '+(ev.text||''));
-        if(ev.type==='tool_call') append(`[tool] ${ev.tool} ${JSON.stringify(ev.args)} ${ev.note||''}`, 'tool');
-        if(ev.type==='tool_result') append(`[result] ${JSON.stringify(ev.result).slice(0,1000)}`, 'res');
-        if(ev.type==='raw') appendDetails('raw payload', ev.data);
+        if(ev.type==='assistant_raw'){ /* suppress noisy raw assistant JSON in UI */ }
+        if(ev.type==='reasoning'){ appendReasoningDetails(ev.text||''); }
+        if(ev.type==='tool_call'){
+          const d=ev;
+          const details=document.createElement('details'); details.className='evt tool'; details.id='tool-'+(d.id||''); details.open=true;
+          const summary=document.createElement('summary'); summary.className='line';
+          const lab=document.createElement('span'); lab.className='label'; lab.textContent='tool>';
+          const cont=document.createElement('span'); cont.className='content'; cont.textContent=`${d.tool} ${(d.note||'').replace(/\s+/g, ' ')}`;
+          summary.appendChild(lab); summary.appendChild(cont);
+          const pre=document.createElement('pre'); pre.textContent='args: '+JSON.stringify(d.args, null, 2);
+          details.appendChild(summary); details.appendChild(pre);
+          log.appendChild(details); log.scrollTop=log.scrollHeight;
+        }
+        if(ev.type==='tool_result'){
+          const d=ev;
+          const details=document.getElementById('tool-'+(d.id||''));
+          if(details){ const pre=document.createElement('pre'); pre.textContent='result: '+JSON.stringify(d.result, null, 2); details.appendChild(pre); }
+          else { append('[result] '+JSON.stringify(d.result).slice(0,1000), 'res'); }
+        }
+        if(ev.type==='raw'){ appendDetails('raw payload', ev.data); }
         if(ev.type==='approval') { if(ev.auto){ append(`[approval auto] ${ev.tool}`,'tool'); } else { appendApproval(ev); } }
-        if(ev.type==='final') append('final> '+(ev.content||''), 'final');
+        if(ev.type==='final') append('assistant> '+(ev.content||''), 'final');
       });
     }
     async function refreshAuto(){
@@ -150,10 +206,13 @@ INDEX_HTML = """
       await refreshAuto();
     }
     async function send(){
+      if(sending) return;
       const text = input.value.trim(); if(!text) return; input.value=''; append('you> '+text);
       // Open SSE stream
       beginSession();
+      setSending(true);
       const src = new EventSource('/api/chat_stream?q='+encodeURIComponent(text));
+      if(sess){ sess.src = src; }
       src.addEventListener('assistant_delta', e=>{
         const d = JSON.parse(e.data); const el = ensureAssistantEl(); el.textContent += d.text;
       });
@@ -162,12 +221,32 @@ INDEX_HTML = """
       });
       // Buffer raw payload; show after final
       src.addEventListener('raw', e=>{ const d=JSON.parse(e.data); if(sess){ sess.raw = d; } });
-      src.addEventListener('tool_call', e=>{ const d=JSON.parse(e.data); appendTool(`${d.tool} ${JSON.stringify(d.args)} ${d.note||''}`); });
-      src.addEventListener('tool_result', e=>{ const d=JSON.parse(e.data); appendTool(`result ${JSON.stringify(d.result).slice(0,1000)}`); });
+      src.addEventListener('tool_call', e=>{
+        collapseReasoning();
+        const d=JSON.parse(e.data);
+        const details=document.createElement('details'); details.className='evt tool'; details.id='tool-'+d.id; details.open=false;
+        const summary=document.createElement('summary'); summary.className='line';
+        const lab=document.createElement('span'); lab.className='label'; lab.textContent='tool>';
+        const cont=document.createElement('span'); cont.className='content'; cont.textContent=`${d.tool} ${(d.note||'').replace(/\s+/g, ' ')}`;
+        summary.appendChild(lab); summary.appendChild(cont);
+        const pre=document.createElement('pre'); pre.textContent='args: '+JSON.stringify(d.args, null, 2);
+        details.appendChild(summary); details.appendChild(pre);
+        log.appendChild(details); log.scrollTop=log.scrollHeight;
+      });
+      src.addEventListener('tool_result', e=>{
+        const d=JSON.parse(e.data);
+        const details=document.getElementById('tool-'+d.id);
+        if(details){
+          const pre=document.createElement('pre'); pre.textContent='result: '+JSON.stringify(d.result, null, 2);
+          details.appendChild(pre);
+        }
+      });
       src.addEventListener('approval', e=>{ const d=JSON.parse(e.data); appendApproval(d); });
       src.addEventListener('reasoning', e=>{ const d=JSON.parse(e.data); const el=ensureReasoningEl(); el.textContent = 'reasoning> '+(d.text||''); if(sess){ sess.reasoningBuf = d.text||''; } });
-      src.addEventListener('final', e=>{ const d=JSON.parse(e.data); collapseReasoning(); append('assistant> '+(d.content||''), 'final'); endSession(); });
-      src.addEventListener('done', e=>{ src.close(); });
+      src.addEventListener('final', e=>{ const d=JSON.parse(e.data); collapseReasoning(); append('assistant> '+(d.content||''), 'final'); endSession(); setSending(false); try{ src.close(); }catch(e){} });
+      src.addEventListener('reasoning_start', e=>{ collapseReasoning(); });
+      src.addEventListener('done', e=>{ setSending(false); try{ src.close(); }catch(e){} });
+      src.addEventListener('error', e=>{ setSending(false); try{ src.close(); }catch(e){} });
     }
     refreshAuto();
   </script>
@@ -217,6 +296,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b"\n\n")
                     self.wfile.flush()
                 except Exception:
+                    # Client likely disconnected; request backend cancel to stop generation
+                    try:
+                        Handler.orch.request_cancel()
+                    except Exception:
+                        pass
                     pass
 
             class SSESink(EventRecorder):
@@ -267,6 +351,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/auto_approve"):
             body = json.dumps({"auto_approve": Handler.auto_approve}).encode("utf-8")
             self._send(200, body, "application/json")
+            return
+        if self.path == "/api/cancel":
+            try:
+                Handler.orch.request_cancel()
+                body = json.dumps({"canceled": True}).encode("utf-8")
+                self._send(200, body, "application/json")
+            except Exception as e:
+                body = json.dumps({"canceled": False, "error": str(e)}).encode("utf-8")
+                self._send(500, body, "application/json")
             return
         self._send(404, b"Not Found")
 
@@ -327,6 +420,15 @@ class Handler(BaseHTTPRequestHandler):
                 Handler.auto_approve = val
             body = json.dumps({"auto_approve": Handler.auto_approve}).encode("utf-8")
             self._send(200, body, "application/json")
+            return
+        if self.path == "/api/cancel":
+            try:
+                Handler.orch.request_cancel()
+                body = json.dumps({"canceled": True}).encode("utf-8")
+                self._send(200, body, "application/json")
+            except Exception as e:
+                body = json.dumps({"canceled": False, "error": str(e)}).encode("utf-8")
+                self._send(500, body, "application/json")
             return
         self._send(404, b"Not Found")
 

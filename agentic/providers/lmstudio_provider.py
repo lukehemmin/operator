@@ -92,6 +92,7 @@ class LMStudioProvider:
         reasoning_acc = []
         raw_last = None
         final_reasoning = None
+        last_reasoning_len = 0
         try:
             with urllib.request.urlopen(req, timeout=request_timeout) as resp:
                 while True:
@@ -123,8 +124,15 @@ class LMStudioProvider:
                             # Some servers may stream reasoning as a field
                             if isinstance(d.get("reasoning"), str):
                                 r = d.get("reasoning")
-                                reasoning_acc.append(r)
-                                yield {"event": "delta", "reasoning": r}
+                                full_reasoning = "".join(reasoning_acc)
+                                if r.startswith(full_reasoning):
+                                    new_reasoning = r[len(full_reasoning):]
+                                    if new_reasoning:
+                                        reasoning_acc.append(new_reasoning)
+                                        yield {"event": "delta", "reasoning": new_reasoning}
+                                else:
+                                    reasoning_acc.append(r)
+                                    yield {"event": "delta", "reasoning": r}
                         except Exception:
                             continue
         except Exception:

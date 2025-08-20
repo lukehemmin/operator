@@ -117,6 +117,7 @@ class Orchestrator:
         self.config = config
         self.messages: List[Message] = [{"role": "system", "content": system_prompt(config)}]
         self._pending: Dict[str, Any] | None = None
+        self._cancel_requested: bool = False
 
     def append_user(self, content: str) -> None:
         self.messages.append({"role": "user", "content": content})
@@ -355,6 +356,7 @@ class Orchestrator:
 
     def chat_stream(self, user_input: str, sink: EventSink | None = None) -> str:
         sink = sink or NullSink()
+        self._cancel_requested = False  # reset cancel flag for this run
         self.append_user(user_input)
         final_output = ""
         for step in range(1, self.config.max_steps + 1):
@@ -374,7 +376,23 @@ class Orchestrator:
             full_text: List[str] = []
             full_reason: List[str] = []
             raw_last = None
+
+            # Early cancel check
+            if self._cancel_requested:
+                try:
+                    gen.close()
+                except Exception:
+                    pass
+                return ""
+
             for ev in gen:
+                # Mid-stream cancel check
+                if self._cancel_requested:
+                    try:
+                        gen.close()
+                    except Exception:
+                        pass
+                    return ""
                 if not isinstance(ev, dict):
                     continue
                 if ev.get("event") == "delta":
@@ -454,3 +472,7 @@ class Orchestrator:
         sink.on_tool_result(tool_id, result)
         self.append_tool_result(tool_id, result)
         return {"approved": True, "result": result}
+
+    def request_cancel(self) -> None:
+        """Signal the current streaming operation to cancel asap."""
+        self._cancel_requested = True
