@@ -91,6 +91,7 @@ class LMStudioProvider:
         content_acc = []
         reasoning_acc = []
         raw_last = None
+        final_reasoning = None
         try:
             with urllib.request.urlopen(req, timeout=request_timeout) as resp:
                 while True:
@@ -105,6 +106,15 @@ class LMStudioProvider:
                             delta = json.loads(payload_line.decode("utf-8"))
                             raw_last = delta
                             choice = (delta.get("choices") or [{}])[0]
+                            # If LM Studio emits full message in stream
+                            msg = choice.get("message") or {}
+                            if msg:
+                                txt = msg.get("content") or ""
+                                if txt:
+                                    content_acc.append(txt)
+                                if isinstance(msg.get("reasoning"), str):
+                                    final_reasoning = msg.get("reasoning")
+                                # do not emit content as delta here to avoid duplication; let final handle
                             d = choice.get("delta") or {}
                             if d.get("content"):
                                 text = d.get("content")
@@ -120,5 +130,6 @@ class LMStudioProvider:
         except Exception:
             pass
         final_text = "".join(content_acc)
-        final_reasoning = "".join(reasoning_acc) if reasoning_acc else None
+        if final_reasoning is None and reasoning_acc:
+            final_reasoning = "".join(reasoning_acc)
         yield {"event": "final", "content": final_text, "reasoning": final_reasoning, "raw": raw_last}

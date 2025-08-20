@@ -357,79 +357,76 @@ class Orchestrator:
         sink = sink or NullSink()
         self.append_user(user_input)
         final_output = ""
-        # Stream generation tokens first
-        gen = None
-        if hasattr(self.provider, "generate_stream"):
-            gen = self.provider.generate_stream(
-                self.messages,
-                model=self.config.model,
-                request_timeout=self.config.request_timeout,
-                reasoning=self.config.reasoning_mode != "off",
-                reasoning_effort=self.config.reasoning_effort,
-            )
-        if gen is None:
-            return self.chat_once(user_input, sink)
-        full_text = []
-        full_reason = []
-        raw_last = None
-        for ev in gen:
-            if not isinstance(ev, dict):
-                continue
-            if ev.get("event") == "delta":
-                if ev.get("text"):
-                    full_text.append(ev.get("text"))
-                    # Do not stream assistant JSON to UI; show only final parsed answer
-                if ev.get("reasoning"):
-                    full_reason.append(ev.get("reasoning"))
-                    sink.on_stream_reasoning(ev.get("reasoning"))
-            if ev.get("event") == "final":
-                raw_last = ev.get("raw")
-                text = ev.get("content", "")
-                reasoning_text = ev.get("reasoning")
-                # Fall back to accumulated text if empty
-                if not text:
-                    text = "".join(full_text)
-                if reasoning_text is None and full_reason:
-                    reasoning_text = "".join(full_reason)
-                log_jsonl(self.config.log_dir, "llm", {"direction": "assistant", "text": text, "reasoning": reasoning_text, "raw": raw_last})
-                sink.on_reasoning(reasoning_text)
-                if raw_last is not None:
-                    sink.on_raw(raw_last)
-                # Do not show assistant raw JSON unless verbose sink handles it
-                sink.on_assistant_raw(text or "")
-                obj = extract_json_object(text or "")
-                if not obj:
-                    self.append_user("Please respond with valid JSON per protocol.")
-                    break
-                if obj.get("type") == "final":
-                    final_output = str(obj.get("content", ""))
-                    if obj.get("summary"):
-                        sink.on_reasoning(obj.get("summary"))
-                    sink.on_final(final_output)
-                    break
-                if obj.get("type") == "tool":
-                    tool = obj.get("tool")
-                    tool_id = obj.get("id") or f"t1"
-                    args = obj.get("args") or {}
-                    note = obj.get("note")
-                    sink.on_tool_call(tool, tool_id, args, note)
-                    if obj.get("summary"):
-                        sink.on_reasoning(obj.get("summary"))
-                    need, reason = self.needs_approval(tool, args)
-                    if need:
-                        token = str(uuid.uuid4())
-                        decision = sink.on_approval_required(tool, tool_id, reason, args, token=token)
-                        if decision is APPROVAL_DEFER:
-                            self._pending = {"token": token, "tool": tool, "tool_id": tool_id, "args": args}
-                            break
-                        if not decision:
-                            self.append_user(f"Tool {tool} was denied by user. Provide alternative or ask clarification.")
-                            break
-                    result = self.execute_tool(tool, args)
-                    log_jsonl(self.config.log_dir, "tool", {"tool": tool, "args": args, "result": result})
-                    sink.on_tool_result(tool_id, result)
-                    self.append_tool_result(tool_id, result)
-                    break
+        for step in range(1, self.config.max_steps + 1):
+            gen = None
+            if hasattr(self.provider, "generate_stream"):
+                gen = self.provider.generate_stream(
+                    self.messages,
+                    model=self.config.model,
+                    request_timeout=self.config.request_timeout,
+                    reasoning=self.config.reasoning_mode != "off",
+                    reasoning_effort=self.config.reasoning_effort,
+                )
+            if gen is None:
+                # Fallback to non-stream path for this step
+                return self.chat_once(user_input if step == 1 else "", sink)
+
+            full_text: List[str] = []
+            full_reason: List[str] = []
+            raw_last = None
+            for ev in gen:
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("event") == "delta":
+                    if ev.get("text"):
+                        full_text.append(ev.get("text"))
+                        # Don't stream assistant JSON body
+                    if ev.get("reasoning"):
+                        full_reason.append(ev.get("reasoning"))
+                        sink.on_stream_reasoning(ev.get("reasoning"))
+                if ev.get("event") == "final":
+                    raw_last = ev.get("raw")
+                    text = ev.get("content", "")
+                    reasoning_text = ev.get("reasoning")
+                    if not text:
+                        text = "".join(full_text)
+                    if reasoning_text is None and full_reason:
+                        reasoning_text = "".join(full_reason)
+                    log_jsonl(self.config.log_dir, "llm", {"direction": "assistant", "text": text, "reasoning": reasoning_text, "raw": raw_last})
+                    sink.on_reasoning(reasoning_text)
+                    if raw_last is not None:
+                        sink.on_raw(raw_last)
+                    sink.on_assistant_raw(text or "")
+                    obj = extract_json_object(text or "")
+                    if not obj:
+                        self.append_user("Please respond with valid JSON per protocol.")
+                        break
+                    if obj.get("type") == "final":
+                        final_output = str(obj.get("content", ""))
+                        sink.on_final(final_output)
+                        return final_output
+                    if obj.get("type") == "tool":
+                        tool = obj.get("tool")
+                        tool_id = obj.get("id") or f"t{step}"
+                        args = obj.get("args") or {}
+                        note = obj.get("note")
+                        sink.on_tool_call(tool, tool_id, args, note)
+                        need, reason = self.needs_approval(tool, args)
+                        if need:
+                            token = str(uuid.uuid4())
+                            decision = sink.on_approval_required(tool, tool_id, reason, args, token=token)
+                            if decision is APPROVAL_DEFER:
+                                self._pending = {"token": token, "tool": tool, "tool_id": tool_id, "args": args}
+                                return ""
+                            if not decision:
+                                self.append_user(f"Tool {tool} was denied by user. Provide alternative or ask clarification.")
+                                break
+                        result = self.execute_tool(tool, args)
+                        log_jsonl(self.config.log_dir, "tool", {"tool": tool, "args": args, "result": result})
+                        sink.on_tool_result(tool_id, result)
+                        self.append_tool_result(tool_id, result)
+                        # Continue loop to next step with tool result in context
+                        break
         return final_output
 
     def has_pending_approval(self) -> bool:

@@ -1,4 +1,4 @@
-Agentic Server (Minimal, Multi‑Provider)
+# Agentic Server (Minimal, Multi‑Provider)
 
 개요
 - 우분투 서버에서 로컬/클라우드 LLM(OpenAI/Anthropic/Ollama)을 선택해 작업을 계획하고 도구(run shell, 파일 IO, 간단 웹 요청)를 실행하는 최소 에이전트입니다.

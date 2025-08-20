@@ -12,44 +12,85 @@ INDEX_HTML = """
 <!doctype html>
 <html><head>
   <meta charset=\"utf-8\" />
-  <title>Agentic Web Chat</title>
+  <title>Agentic Web</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; }
-    #log { white-space: pre-wrap; border: 1px solid #ccc; padding: 1rem; height: 60vh; overflow: auto; }
-    #input { width: 80%; }
-    .evt { margin-bottom: .5rem; }
-    .tool { color: #064; }
-    .res { color: #333; }
-    .final { color: #047; font-weight: bold; }
-    .approval { background: #fffbe6; padding: .5rem; border: 1px dashed #cc0; }
-    details { margin: .25rem 0; }
-    pre { background: #f7f7f7; padding: .5rem; overflow: auto; }
+    :root { --bg:#f8f9fb; --fg:#0f172a; --muted:#64748b; --panel:#ffffff; --border:#e2e8f0; --accent:#2563eb; }
+    .dark { --bg:#0b1220; --fg:#e5e7eb; --muted:#9aa4b2; --panel:#0f172a; --border:#1f2a44; --accent:#60a5fa; }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Noto Sans KR,Helvetica,Arial}
+    .wrap{max-width:980px;margin:0 auto;padding:24px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .brand{font-weight:700;letter-spacing:-.02em}
+    .controls{display:flex;gap:8px;align-items:center;color:var(--muted)}
+    .btn{border:1px solid var(--border);background:var(--panel);color:var(--fg);padding:6px 10px;border-radius:8px;cursor:pointer}
+    .btn:hover{border-color:var(--accent)}
+    .badge{padding:2px 8px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--muted)}
+    #log{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;height:60vh;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace}
+    .line{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:start;padding:6px 4px;border-radius:6px}
+    .line .label{color:var(--muted);text-transform:lowercase;letter-spacing:.2px}
+    .line .content{white-space:pre-wrap}
+    .evt.tool .content{color:#0f5132}
+    .evt.res .content{color:#334155}
+    .approval{background:color-mix(in oklab,var(--panel) 92%,var(--accent));border:1px dashed var(--accent);border-radius:10px;padding:10px;margin-top:8px}
+    details{margin:6px 0}
+    pre{margin:6px 0 0;background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px;overflow:auto}
+    .composer{display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:14px}
+    .input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--fg)}
+    .primary{background:var(--accent);color:#fff;border:1px solid var(--accent)}
+    .primary:hover{filter:brightness(1.05)}
   </style>
 </head>
 <body>
-  <h2>Agentic Web Chat</h2>
-  <div style=\"margin-bottom: .5rem\">
-    <span id=\"auto\">auto-approve: ...</span>
-    <button onclick=\"toggleAuto()\">Toggle Auto</button>
-  </div>
-  <div id=\"log\"></div>
-  <div style=\"margin-top:1rem\">
-    <input id=\"input\" placeholder=\"메시지를 입력하고 Enter\" />
-    <button onclick=\"send()\">Send</button>
+  <div class=\"wrap\">
+    <div class=\"topbar\">
+      <div class=\"brand\">Agentic</div>
+      <div class=\"controls\">
+        <span class=\"badge\" id=\"auto\">auto-approve: ...</span>
+        <button class=\"btn\" onclick=\"toggleAuto()\">Toggle Auto</button>
+        <button class=\"btn\" onclick=\"toggleTheme()\">Theme</button>
+      </div>
+    </div>
+    <div id=\"log\"></div>
+    <div id=\"tools\" style=\"margin-top:12px\"></div>
+    <div id=\"reasoning\" style=\"margin-top:12px\"></div>
+    <div class=\"composer\">
+      <input class=\"input\" id=\"input\" placeholder=\"메시지를 입력하고 Enter\" />
+      <button class=\"btn primary\" onclick=\"send()\">Send</button>
+    </div>
   </div>
   <script>
     const log = document.getElementById('log');
+    const tools = document.getElementById('tools');
+    const reasoningBox = document.getElementById('reasoning');
     const input = document.getElementById('input');
     input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ send(); }});
-    function append(line, cls){ const div=document.createElement('div'); div.className='evt '+(cls||''); div.textContent=line; log.appendChild(div); log.scrollTop=log.scrollHeight; }
+    function append(line, cls){
+      const div=document.createElement('div'); div.className='line evt '+(cls||'');
+      const lab=document.createElement('span'); lab.className='label';
+      const cont=document.createElement('span'); cont.className='content';
+      const idx=line.indexOf('> ');
+      if(idx>0){ lab.textContent=line.slice(0, idx+1); cont.textContent=line.slice(idx+2); }
+      else { lab.textContent=''; cont.textContent=line; }
+      div.appendChild(lab); div.appendChild(cont); log.appendChild(div); log.scrollTop=log.scrollHeight;
+    }
+    function appendTool(line){
+      const div=document.createElement('div'); div.className='line evt tool';
+      const lab=document.createElement('span'); lab.className='label'; lab.textContent='tool>';
+      const cont=document.createElement('span'); cont.className='content'; cont.textContent=line;
+      div.appendChild(lab); div.appendChild(cont); tools.appendChild(div); tools.scrollTop=tools.scrollHeight;
+    }
     function appendApproval(ev){
-      const div=document.createElement('div'); div.className='evt approval';
-      div.textContent=`[approval] ${ev.tool} ${JSON.stringify(ev.args)} reason=${ev.reason}`;
-      const btnY=document.createElement('button'); btnY.textContent='Approve'; btnY.onclick=()=>approve(ev.token,true,div);
-      const btnN=document.createElement('button'); btnN.textContent='Deny'; btnN.onclick=()=>approve(ev.token,false,div);
-      div.appendChild(document.createElement('br'));
-      div.appendChild(btnY); div.appendChild(btnN);
-      log.appendChild(div); log.scrollTop=log.scrollHeight;
+      const card=document.createElement('div'); card.className='approval';
+      const head=document.createElement('div'); head.style.display='flex'; head.style.justifyContent='space-between'; head.style.alignItems='center';
+      const title=document.createElement('div'); title.textContent='Approval required'; head.appendChild(title);
+      const actions=document.createElement('div');
+      const yes=document.createElement('button'); yes.className='btn primary'; yes.textContent='Approve'; yes.onclick=()=>approve(ev.token,true,card);
+      const no=document.createElement('button'); no.className='btn'; no.style.marginLeft='6px'; no.textContent='Deny'; no.onclick=()=>approve(ev.token,false,card);
+      actions.appendChild(yes); actions.appendChild(no); head.appendChild(actions);
+      const meta=document.createElement('div'); meta.style.marginTop='6px'; meta.textContent=`tool=${ev.tool} reason=${ev.reason}`;
+      const pre=document.createElement('pre'); pre.textContent=JSON.stringify(ev.args, null, 2);
+      card.appendChild(head); card.appendChild(meta); card.appendChild(pre);
+      tools.appendChild(card); tools.scrollTop=tools.scrollHeight;
     }
     async function approve(token, ok, holder){
       holder.textContent = holder.textContent + ` => sending decision...`;
@@ -61,26 +102,28 @@ INDEX_HTML = """
       const d=document.createElement('details');
       const s=document.createElement('summary'); s.textContent=title; d.appendChild(s);
       const pre=document.createElement('pre'); pre.textContent=JSON.stringify(obj, null, 2);
-      d.appendChild(pre); log.appendChild(d); log.scrollTop=log.scrollHeight;
+      d.appendChild(pre); tools.appendChild(d); tools.scrollTop=tools.scrollHeight;
     }
     // Streaming session state and helpers
     let sess = null;
     function beginSession(){ sess = {assistantEl:null, reasoningEl:null, raw:null, reasoningBuf:''}; }
-    function ensureAssistantEl(){ if(!sess.assistantEl){ const div=document.createElement('div'); div.className='evt'; div.textContent='assistant> '; log.appendChild(div); sess.assistantEl=div; } return sess.assistantEl; }
-    function ensureReasoningEl(){ if(!sess.reasoningEl){ const div=document.createElement('div'); div.className='evt'; div.textContent='reasoning> '; log.appendChild(div); sess.reasoningEl=div; } return sess.reasoningEl; }
+    function ensureAssistantEl(){ if(!sess.assistantEl){ const div=document.createElement('div'); div.className='line evt'; const lab=document.createElement('span'); lab.className='label'; lab.textContent='assistant>'; const cont=document.createElement('span'); cont.className='content'; div.appendChild(lab); div.appendChild(cont); log.appendChild(div); sess.assistantEl=cont; } return sess.assistantEl; }
+    function ensureReasoningEl(){ if(!sess.reasoningEl){ const div=document.createElement('div'); div.className='line evt'; const lab=document.createElement('span'); lab.className='label'; lab.textContent='reasoning>'; const cont=document.createElement('span'); cont.className='content'; div.appendChild(lab); div.appendChild(cont); reasoningBox.appendChild(div); sess.reasoningEl=cont; } return sess.reasoningEl; }
     function collapseReasoning(){
       if(!sess || !sess.reasoningEl) return;
       const text = sess.reasoningBuf || (sess.reasoningEl.textContent||'').replace(/^reasoning>\s*/, '');
-      const details = document.createElement('details');
-      details.className='evt';
-      details.open = false;
-      const sum = document.createElement('summary');
-      sum.textContent = 'reasoning (click to expand)';
-      const pre = document.createElement('pre');
-      pre.textContent = text;
-      details.appendChild(sum); details.appendChild(pre);
-      log.replaceChild(details, sess.reasoningEl);
-      sess.reasoningEl = details;
+      const container = sess.reasoningEl.parentElement;
+      const row=document.createElement('div'); row.className='line evt';
+      const lab=document.createElement('span'); lab.className='label'; lab.textContent='reasoning>';
+      const body=document.createElement('div');
+      const det=document.createElement('details'); det.open = false; const sum=document.createElement('summary'); sum.textContent='reasoning (click to expand)'; const pre=document.createElement('pre'); pre.textContent=text; det.appendChild(sum); det.appendChild(pre);
+      body.appendChild(det); row.appendChild(lab); row.appendChild(body);
+      if (container && container.parentElement) {
+        container.parentElement.replaceChild(row, container);
+      } else {
+        reasoningBox.appendChild(row);
+      }
+      sess.reasoningEl = null;
     }
     function endSession(){ if(sess && sess.raw){ appendDetails('raw payload', sess.raw); } sess=null; }
     function renderEvents(events){
@@ -119,8 +162,8 @@ INDEX_HTML = """
       });
       // Buffer raw payload; show after final
       src.addEventListener('raw', e=>{ const d=JSON.parse(e.data); if(sess){ sess.raw = d; } });
-      src.addEventListener('tool_call', e=>{ const d=JSON.parse(e.data); append(`[tool] ${d.tool} ${JSON.stringify(d.args)} ${d.note||''}`, 'tool'); });
-      src.addEventListener('tool_result', e=>{ const d=JSON.parse(e.data); append(`[result] ${JSON.stringify(d.result).slice(0,1000)}`, 'res'); });
+      src.addEventListener('tool_call', e=>{ const d=JSON.parse(e.data); appendTool(`${d.tool} ${JSON.stringify(d.args)} ${d.note||''}`); });
+      src.addEventListener('tool_result', e=>{ const d=JSON.parse(e.data); appendTool(`result ${JSON.stringify(d.result).slice(0,1000)}`); });
       src.addEventListener('approval', e=>{ const d=JSON.parse(e.data); appendApproval(d); });
       src.addEventListener('reasoning', e=>{ const d=JSON.parse(e.data); const el=ensureReasoningEl(); el.textContent = 'reasoning> '+(d.text||''); if(sess){ sess.reasoningBuf = d.text||''; } });
       src.addEventListener('final', e=>{ const d=JSON.parse(e.data); collapseReasoning(); append('assistant> '+(d.content||''), 'final'); endSession(); });
@@ -177,14 +220,19 @@ class Handler(BaseHTTPRequestHandler):
                     pass
 
             class SSESink(EventRecorder):
+                def __init__(self):
+                    super().__init__()
+                    self._sent_reasoning = False
                 def on_stream_text(self, t: str):
                     send_event('assistant_delta', {"text": t})
                 def on_stream_reasoning(self, t: str):
+                    self._sent_reasoning = True
                     send_event('reasoning_delta', {"text": t})
                 def on_assistant_raw(self, t: str):
                     send_event('assistant_raw', {"text": t})
                 def on_reasoning(self, txt: str | None):
                     if txt:
+                        self._sent_reasoning = True
                         send_event('reasoning', {"text": txt})
                 def on_tool_call(self, tool, tool_id, args, note=None):
                     send_event('tool_call', {"tool": tool, "id": tool_id, "args": args, "note": note})
@@ -197,7 +245,20 @@ class Handler(BaseHTTPRequestHandler):
                 def on_final(self, content: str):
                     send_event('final', {"content": content})
                 def on_raw(self, data):
+                    # Forward raw payload and attempt to extract reasoning if missing
                     send_event('raw', data)
+                    try:
+                        obj = data if isinstance(data, dict) else {}
+                        if not self._sent_reasoning:
+                            # OpenAI/OpenRouter/LM Studio style
+                            ch = (obj.get('choices') or [{}])[0]
+                            msg = ch.get('message') or {}
+                            r = msg.get('reasoning') or ch.get('reasoning')
+                            if isinstance(r, str) and r.strip():
+                                self._sent_reasoning = True
+                                send_event('reasoning', {"text": r})
+                    except Exception:
+                        pass
 
             sink = SSESink()
             Handler.orch.chat_stream(text, sink=sink)
